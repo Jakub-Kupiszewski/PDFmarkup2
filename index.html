@@ -254,10 +254,10 @@
       reader.onload = function () {
         const typedarray = new Uint8Array(this.result);
         pdfjsLib.getDocument(typedarray).promise.then(doc => {
-          pdf = doc;
-          totalPages = doc.numPages;
-          currentPage = 1;
-          renderPage(currentPage);
+        pdf = doc;
+        totalPages = doc.numPages;
+        currentPage = 1;
+        fitToScreen();
         });
       };
       reader.readAsArrayBuffer(file);
