@@ -320,7 +320,7 @@
       renderPage(currentPage);
     }
 
-   async function savePDF() {
+    async function savePDF() {
   const { jsPDF } = window.jspdf;
   const firstPage = await pdf.getPage(1);
   const originalViewport = firstPage.getViewport({ scale: 2 });
@@ -374,7 +374,9 @@
   }
 
   const now = new Date();
-  const timestamp = now.toISOString().replace(/[:.]/g, '-');
+  const dateStr = now.toLocaleDateString('en-US').replace(/\//g, '-');
+const timeStr = now.toLocaleTimeString('en-US', { hour12: true }).replace(/:/g, '-').replace(/\s/g, '');
+const timestamp = `${dateStr}_${timeStr}`;
   const filename = `marked_${timestamp}.pdf`;
   pdfDoc.save(filename);
     }
