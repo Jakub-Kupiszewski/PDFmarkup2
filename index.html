@@ -404,7 +404,7 @@ const timestamp = `${dateStr}_${timeStr}`;
     function fitToScreen() {
       const containerWidth = container.clientWidth;
       pdf.getPage(currentPage).then(page => {
-        const viewportUnscaled = page.getViewport({ scale: 2 });
+        const viewportUnscaled = page.getViewport({ scale: 1 });
         scale = containerWidth / viewportUnscaled.width;
         renderPage(currentPage);
       });
