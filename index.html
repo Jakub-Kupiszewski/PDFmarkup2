@@ -320,14 +320,14 @@
       renderPage(currentPage);
     }
 
-    async function savePDF() {
+   async function savePDF() {
   const { jsPDF } = window.jspdf;
   const firstPage = await pdf.getPage(1);
-  const originalViewport = firstPage.getViewport({ scale: 1 });
-  const inchToPx = 72; // jsPDF uses 72 DPI by default
-  const pageWidth = 11 * inchToPx;
-  const pageHeight = 17 * inchToPx;
+  const originalViewport = firstPage.getViewport({ scale: 2 });
+  const pageWidth = originalViewport.width;
+  const pageHeight = originalViewport.height;
   const pdfDoc = new jsPDF({ unit: 'px', format: [pageWidth, pageHeight] });
+
 
   const summaryLines = ['PDF Markup Summary'];
   colors.forEach(color => {
