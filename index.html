@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PDF Markup App</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body {
+      font-family: "Haas Grot Text R Web", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    #toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 999;
+      background-color: #f5f5f5;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 10px;
+      background: #f5f5f5;
+      flex-wrap: wrap;
+    }
+    .color-dot-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 5px;
+      font-size: 12px;
+    }
+    .color-dot {
+      width: 25px;
+      height: 25px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 2px solid transparent;
+    }
+    .selected {
+      border-color: black;
+    }
+    #canvas-container {
+      position: relative;
+      overflow: auto;
+      width: 100%;
+      height: 80vh;
+      border: 1px solid #ccc;
+    }
+    canvas {
+      display: block;
+    }
+    .mark {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    .reset-button {
+      font-size: 10px;
+      margin-top: 2px;
+      cursor: pointer;
+      color: blue;
+      text-decoration: underline;
+      border: none;
+      background: none;
+    }
+    .button-1 {
+      background-color: #2ea44f;
+      border-radius: 8px;
+      border-style: none;
+      box-sizing: border-box;
+      color: #FFFFFF;
+      cursor: pointer;
+      display: inline-block;
+      font-family: "Haas Grot Text R Web", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      font-weight: 500;
+      height: 40px;
+      line-height: 20px;
+      list-style: none;
+      margin: 5px;
+      outline: none;
+      padding: 10px 16px;
+      position: relative;
+      text-align: center;
+      text-decoration: none;
+      transition: color 100ms;
+      vertical-align: baseline;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+
+    .button-1:hover,
+    .button-1:focus {
+      background-color: #d6d6d6;
+    }
+
+    #zoom-level {
+      margin-left: 10px;
+      font-weight: bold;
+    }
+  #color-tools {
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  background-color: rgba(255, 255, 255, 0.5);
+  padding: 10px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  z-index: 1000;
+}
+</style>
+</head>
+<body>
+  <div id="toolbar">
+  <div id="color-tools"></div>
+  <div id="button-group" style="width: 100%; text-align: center; margin-top: 10px;">
+    <input type="file" id="upload" accept="application/pdf" class="button-1">
+    <button onclick="savePDF()" class="button-1">Save Marked PDF</button>
+    <button onclick="resetMarks()" class="button-1">Reset</button>
+    <button onclick="zoomIn()" class="button-1">Zoom In</button>
+    <button onclick="zoomOut()" class="button-1">Zoom Out</button>
+    <button onclick="fitToScreen()" class="button-1">Fit to Screen</button>
+    <button onclick="toggleFullscreen()" class="button-1">Fullscreen</button>
+    <button onclick="previousPage()" class="button-1">Previous Page</button>
+    <button onclick="nextPage()" class="button-1">Next Page</button>
+    <span id="zoom-level">Zoom: 100%</span>
+    <span id="page-info" style="margin-left: 10px; font-weight: bold;">Page: 1</span>
+  </div>
+</div>
+<div id="canvas-container">
+    <canvas id="pdf-canvas"></canvas>
+  </div>
+
+  <script>
+    const colors = ['red', 'green', 'blue', 'orange', 'purple', 'cyan', 'magenta', 'yellow', 'black', 'gray'];
+    const counts = {};
+    const marks = {}; // pageNum => [{x, y, color}]
+    let selectedColor = colors[0];
+    let pdf = null, currentPage = 1, totalPages = 1, viewport = null, scale = 1;
+
+    const toolbar = document.getElementById('color-tools');
+    const container = document.getElementById('canvas-container');
+    const canvas = document.getElementById('pdf-canvas');
+    const ctx = canvas.getContext('2d');
+    const zoomDisplay = document.getElementById('zoom-level');
+    const pageInfo = document.getElementById('page-info');
+
+    function updateZoomLevel() {
+      zoomDisplay.textContent = `Zoom: ${Math.round(scale * 100)}%`;
+    }
+
+    function updatePageInfo() {
+      pageInfo.textContent = `Page: ${currentPage}`;
+    }
+
+    function previousPage() {
+      if (currentPage > 1) {
+        currentPage--;
+        renderPage(currentPage);
+      }
+    }
+
+    function nextPage() {
+      if (currentPage < totalPages) {
+        currentPage++;
+        renderPage(currentPage);
+      }
+    }
+
+    colors.forEach(color => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'color-dot-wrapper';
+
+      const dot = document.createElement('div');
+      dot.className = 'color-dot';
+      dot.style.backgroundColor = color;
+      dot.dataset.color = color;
+      if (color === selectedColor) dot.classList.add('selected');
+      dot.onclick = () => {
+        document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('selected'));
+        dot.classList.add('selected');
+        selectedColor = color;
+      };
+
+      const label = document.createElement('input');
+      label.type = 'text';
+      label.value = `item ${colors.indexOf(color) + 1}`;
+      label.style.marginTop = '5px';
+      label.style.fontSize = '12px';
+      label.style.textAlign = 'center';
+      label.style.width = '60px';
+
+      const countText = document.createElement('div');
+      countText.id = `count-${color}`;
+      countText.textContent = '0';
+
+      const resetBtn = document.createElement('button');
+      resetBtn.textContent = 'Reset';
+      resetBtn.className = 'reset-button';
+      resetBtn.onclick = () => {
+        if (!marks[currentPage]) return;
+        marks[currentPage] = marks[currentPage].filter(m => m.color !== color);
+        counts[color] = 0;
+        updateCounts();
+        renderPage(currentPage);
+      };
+
+      wrapper.appendChild(dot);
+      wrapper.appendChild(label);
+      wrapper.appendChild(countText);
+      wrapper.appendChild(resetBtn);
+      toolbar.appendChild(wrapper);
+
+      counts[color] = 0;
+    });
+
+    function updateCounts() {
+      colors.forEach(color => {
+        document.getElementById(`count-${color}`).textContent = counts[color];
+      });
+    }
+
+    document.getElementById('upload').addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (file.type !== 'application/pdf') return;
+      const reader = new FileReader();
+      reader.onload = function () {
+        const typedarray = new Uint8Array(this.result);
+        pdfjsLib.getDocument(typedarray).promise.then(doc => {
+          pdf = doc;
+          totalPages = doc.numPages;
+          currentPage = 1;
+          renderPage(currentPage);
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    function renderPage(pageNum) {
+      pdf.getPage(pageNum).then(page => {
+        viewport = page.getViewport({ scale });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        container.style.width = viewport.width + 'px';
+        container.style.height = viewport.height + 'px';
+        const renderContext = { canvasContext: ctx, viewport: viewport };
+        page.render(renderContext);
+
+        redrawMarks();
+        updateZoomLevel();
+        updatePageInfo();
+      });
+    }
+
+    function redrawMarks() {
+      document.querySelectorAll('.mark').forEach(mark => mark.remove());
+      if (!marks[currentPage]) return;
+      marks[currentPage].forEach(({ x, y, color }) => {
+        const scaledX = x * scale;
+        const scaledY = y * scale;
+        const dot = document.createElement('div');
+        dot.className = 'mark';
+        dot.style.left = `${scaledX - 5}px`;
+        dot.style.top = `${scaledY - 5}px`;
+        dot.style.backgroundColor = color;
+        container.appendChild(dot);
+      });
+    }
+
+    container.addEventListener('click', e => {
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / scale;
+      const y = (e.clientY - rect.top) / scale;
+
+      if (!marks[currentPage]) marks[currentPage] = [];
+
+      const dot = document.createElement('div');
+      dot.className = 'mark';
+      dot.style.left = `${x * scale - 5}px`;
+      dot.style.top = `${y * scale - 5}px`;
+      dot.style.backgroundColor = selectedColor;
+      container.appendChild(dot);
+
+      marks[currentPage].push({ x, y, color: selectedColor });
+      counts[selectedColor]++;
+      updateCounts();
+    });
+
+    function resetMarks() {
+      Object.keys(marks).forEach(page => marks[page] = []);
+      colors.forEach(color => counts[color] = 0);
+      updateCounts();
+      renderPage(currentPage);
+    }
+
+    async function savePDF() {
+  const { jsPDF } = window.jspdf;
+  const firstPage = await pdf.getPage(1);
+  const originalViewport = firstPage.getViewport({ scale: 1 });
+  const inchToPx = 72; // jsPDF uses 72 DPI by default
+  const pageWidth = 11 * inchToPx;
+  const pageHeight = 17 * inchToPx;
+  const pdfDoc = new jsPDF({ unit: 'px', format: [pageWidth, pageHeight] });
+
+  const summaryLines = ['PDF Markup Summary'];
+  colors.forEach(color => {
+    const labelInput = document.querySelector(`.color-dot[data-color='${color}']`).nextSibling;
+    const label = labelInput && labelInput.value ? labelInput.value : `item ${colors.indexOf(color) + 1}`;
+    if (counts[color] > 0) {
+      summaryLines.push(`${label} (${color}): ${counts[color]}`);
+    }
+  });
+
+  for (let i = 1; i <= totalPages; i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1 });
+    const canvasTemp = document.createElement('canvas');
+    canvasTemp.width = viewport.width;
+    canvasTemp.height = viewport.height;
+    const ctxTemp = canvasTemp.getContext('2d');
+    await page.render({ canvasContext: ctxTemp, viewport }).promise;
+
+    const imgData = canvasTemp.toDataURL('image/jpeg');
+
+    if (i !== 1) {
+      pdfDoc.addPage([viewport.width, viewport.height]);
+      pdfDoc.setPage(pdfDoc.getNumberOfPages());
+    }
+    pdfDoc.addImage(imgData, 'JPEG', 0, 0, viewport.width, viewport.height);
+
+    if (i === 1) {
+      pdfDoc.setFontSize(14);
+      pdfDoc.setTextColor(0, 0, 0);
+      let textY = 30;
+      summaryLines.forEach(line => {
+        pdfDoc.text(line, 10, textY);
+        textY += 18;
+      });
+    }
+
+    if (marks[i]) {
+      marks[i].forEach(mark => {
+        pdfDoc.setFillColor(mark.color);
+        pdfDoc.circle(mark.x, mark.y, 5, 'F');
+      });
+    }
+  }
+
+  const now = new Date();
+  const timestamp = now.toISOString().replace(/[:.]/g, '-');
+  const filename = `marked_${timestamp}.pdf`;
+  pdfDoc.save(filename);
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === '+') {
+        e.preventDefault();
+        zoomIn();
+      } else if (e.ctrlKey && e.key === '-') {
+        e.preventDefault();
+        zoomOut();
+      }
+    });
+
+    function zoomIn() {
+      scale = Math.min(scale + 0.1, 3);
+      renderPage(currentPage);
+    }
+
+    function zoomOut() {
+      scale = Math.max(scale - 0.1, 0.2);
+      renderPage(currentPage);
+    }
+
+    function fitToScreen() {
+      const containerWidth = container.clientWidth;
+      pdf.getPage(currentPage).then(page => {
+        const viewportUnscaled = page.getViewport({ scale: 1 });
+        scale = containerWidth / viewportUnscaled.width;
+        renderPage(currentPage);
+      });
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      }
+    }
+  </script>
+</body>
+</html>
