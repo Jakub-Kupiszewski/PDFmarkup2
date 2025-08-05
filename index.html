@@ -92,7 +92,9 @@
       touch-action: manipulation;
     }
 
-    .button-1:hover,
+    .button-1:hover {
+      background-color: #ebdfb5;
+      }
     .button-1:focus {
       background-color: #d6d6d6;
     }
@@ -192,7 +194,7 @@
       label.value = `item ${colors.indexOf(color) + 1}`;
       label.style.marginTop = '5px';
       label.style.fontSize = '12px';
-      label.style.textAlign = 'center';
+      label.style.textAlign = 'left';
       label.style.width = '60px';
 
       const countText = document.createElement('div');
