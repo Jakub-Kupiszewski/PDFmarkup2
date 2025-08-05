@@ -331,10 +331,13 @@
 
   const summaryLines = ['PDF Markup Summary'];
   colors.forEach(color => {
-    const labelInput = document.querySelector(`.color-dot[data-color='${color}']`).nextSibling;
+    const dotElement = document.querySelector(`.color-dot[data-color='${color}']`);
+    const labelInput = dotElement?.parentElement?.querySelector('input');
     const label = labelInput && labelInput.value ? labelInput.value : `item ${colors.indexOf(color) + 1}`;
     if (counts[color] > 0) {
       summaryLines.push(`${label} (${color}): ${counts[color]}`);
+    }
+  });
     }
   });
 
@@ -404,7 +407,7 @@ const timestamp = `${dateStr}_${timeStr}`;
     function fitToScreen() {
       const containerWidth = container.clientWidth;
       pdf.getPage(currentPage).then(page => {
-        const viewportUnscaled = page.getViewport({ scale: 1 });
+        const viewportUnscaled = page.getViewport({ scale: 2 });
         scale = containerWidth / viewportUnscaled.width;
         renderPage(currentPage);
       });
