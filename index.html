@@ -331,7 +331,7 @@
     const labelInput = document.querySelector(`.color-dot[data-color='${color}']`).nextSibling;
     const label = labelInput && labelInput.value ? labelInput.value : `item ${colors.indexOf(color) + 1}`;
     if (counts[color] > 0) {
-      summaryLines.push({ label, color, count: counts[color] });
+      summaryLines.push(`${label} (${color}): ${counts[color]}`);
     }
   });
 
