@@ -331,7 +331,7 @@
     const labelInput = document.querySelector(`.color-dot[data-color='${color}']`).nextSibling;
     const label = labelInput && labelInput.value ? labelInput.value : `item ${colors.indexOf(color) + 1}`;
     if (counts[color] > 0) {
-      summaryLines.push({ label, color, count: counts[color] });
+      summaryLines.push(`${label} (${color}): ${counts[color]}`);
     }
   });
 
@@ -353,14 +353,12 @@
     pdfDoc.addImage(imgData, 'JPEG', 0, 0, viewport.width, viewport.height);
 
     if (i === 1) {
-      pdfDoc.setFontSize(28);
+      pdfDoc.setFontSize(14);
+      pdfDoc.setTextColor(0, 0, 0);
       let textY = 30;
-      summaryLines.forEach(({ label, color, count }) => {
-        pdfDoc.setFillColor(color);
-        pdfDoc.circle(15, textY - 7, 5, 'F');
-        pdfDoc.setTextColor(0, 0, 0);
-        pdfDoc.text(`${label} (${color}): ${count}`, 30, textY);
-        textY += 28;
+      summaryLines.forEach(line => {
+        pdfDoc.text(line, 10, textY);
+        textY += 18;
       });
     }
 
