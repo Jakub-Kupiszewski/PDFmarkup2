@@ -129,6 +129,7 @@
     <button onclick="toggleFullscreen()" class="button-1">Fullscreen</button>
     <button onclick="previousPage()" class="button-1">Previous Page</button>
     <button onclick="nextPage()" class="button-1">Next Page</button>
+    <button onclick="rotatePDF()" class="button-1">Rotate 90°</button>
     <span id="zoom-level">Zoom: 100%</span>
     <span id="page-info" style="margin-left: 10px; font-weight: bold;">Page: 1</span>
   </div>
@@ -140,9 +141,10 @@
   <script>
     const colors = ['red', 'green', 'blue', 'orange', 'purple', 'cyan', 'magenta', 'yellow', 'black', 'gray'];
     const counts = {};
-    const marks = {}; // pageNum => [{x, y, color}]
+    const marks = {}; // pageNum => [{x, y, color}] stored in UNROTATED page coordinates
     let selectedColor = colors[0];
     let pdf = null, currentPage = 1, totalPages = 1, viewport = null, scale = 1;
+    let rotation = 0; // 0, 90, 180, 270
 
     const toolbar = document.getElementById('color-tools');
     const container = document.getElementById('canvas-container');
@@ -169,10 +171,11 @@
     function nextPage() {
       if (currentPage < totalPages) {
         currentPage++;
-        renderPage(currentPage);
+        fitToScreen();
       }
     }
 
+    // Build color tools
     colors.forEach(color => {
       const wrapper = document.createElement('div');
       wrapper.className = 'color-dot-wrapper';
@@ -246,15 +249,15 @@
 
     document.getElementById('upload').addEventListener('change', e => {
       const file = e.target.files[0];
-      if (file.type !== 'application/pdf') return;
+      if (!file || file.type !== 'application/pdf') return;
       const reader = new FileReader();
       reader.onload = function () {
         const typedarray = new Uint8Array(this.result);
         pdfjsLib.getDocument(typedarray).promise.then(doc => {
-        pdf = doc;
-        totalPages = doc.numPages;
-        currentPage = 1;
-        fitToScreen();
+          pdf = doc;
+          totalPages = doc.numPages;
+          currentPage = 1;
+          fitToScreen();
         });
       };
       reader.readAsArrayBuffer(file);
@@ -262,26 +265,56 @@
 
     function renderPage(pageNum) {
       pdf.getPage(pageNum).then(page => {
-        viewport = page.getViewport({ scale });
+        // Base unrotated size for coordinate transforms
+        const base = page.getViewport({ scale: 1, rotation: 0 });
+        const baseW = base.width, baseH = base.height;
+
+        // Rotation-aware viewport for rendering
+        viewport = page.getViewport({ scale, rotation });
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         container.style.width = viewport.width + 'px';
         container.style.height = viewport.height + 'px';
-        const renderContext = { canvasContext: ctx, viewport: viewport };
-        page.render(renderContext);
 
-        redrawMarks();
+        const renderContext = { canvasContext: ctx, viewport };
+        page.render(renderContext).promise.then(() => {
+          redrawMarks(baseW, baseH);
+        });
+
         updateZoomLevel();
         updatePageInfo();
       });
     }
 
-    function redrawMarks() {
+    function transformPoint(x, y, rot, w, h) {
+      // x,y are in unrotated page coords; return rotated coords
+      switch (rot % 360) {
+        case 0: return { x, y };
+        case 90: return { x: y, y: w - x };
+        case 180: return { x: w - x, y: h - y };
+        case 270: return { x: h - y, y: x };
+        default: return { x, y };
+      }
+    }
+
+    function inverseTransformPoint(xp, yp, rot, w, h) {
+      // inverse of transformPoint
+      switch (rot % 360) {
+        case 0: return { x: xp, y: yp };
+        case 90: return { x: w - yp, y: xp };
+        case 180: return { x: w - xp, y: h - yp };
+        case 270: return { x: yp, y: h - xp };
+        default: return { x: xp, y: yp };
+      }
+    }
+
+    function redrawMarks(baseW, baseH) {
       document.querySelectorAll('.mark').forEach(mark => mark.remove());
       if (!marks[currentPage]) return;
       marks[currentPage].forEach(({ x, y, color }) => {
-        const scaledX = x * scale;
-        const scaledY = y * scale;
+        const p = transformPoint(x, y, rotation, baseW, baseH);
+        const scaledX = p.x * scale;
+        const scaledY = p.y * scale;
         const dot = document.createElement('div');
         dot.className = 'mark';
         dot.style.left = `${scaledX - 5}px`;
@@ -292,22 +325,22 @@
     }
 
     container.addEventListener('click', e => {
-      const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / scale;
-      const y = (e.clientY - rect.top) / scale;
+      if (!pdf) return;
+      pdf.getPage(currentPage).then(page => {
+        const base = page.getViewport({ scale: 1, rotation: 0 });
+        const rect = canvas.getBoundingClientRect();
+        // coords in rotated, scaled space
+        const xr = (e.clientX - rect.left) / scale;
+        const yr = (e.clientY - rect.top) / scale;
+        // map back to unrotated page coords for storage
+        const p = inverseTransformPoint(xr, yr, rotation, base.width, base.height);
 
-      if (!marks[currentPage]) marks[currentPage] = [];
-
-      const dot = document.createElement('div');
-      dot.className = 'mark';
-      dot.style.left = `${x * scale - 5}px`;
-      dot.style.top = `${y * scale - 5}px`;
-      dot.style.backgroundColor = selectedColor;
-      container.appendChild(dot);
-
-      marks[currentPage].push({ x, y, color: selectedColor });
-      counts[selectedColor]++;
-      updateCounts();
+        if (!marks[currentPage]) marks[currentPage] = [];
+        marks[currentPage].push({ x: p.x, y: p.y, color: selectedColor });
+        counts[selectedColor]++;
+        updateCounts();
+        renderPage(currentPage);
+      });
     });
 
     function resetMarks() {
@@ -318,64 +351,64 @@
     }
 
     async function savePDF() {
-  const { jsPDF } = window.jspdf;
-  const firstPage = await pdf.getPage(1);
-  const originalViewport = firstPage.getViewport({ scale: 2 });
-  const pageWidth = originalViewport.width;
-  const pageHeight = originalViewport.height;
-  const pdfDoc = new jsPDF({ unit: 'px', format: [pageWidth, pageHeight] });
+      const { jsPDF } = window.jspdf;
+      const firstPage = await pdf.getPage(1);
+      const originalViewport = firstPage.getViewport({ scale: 2 });
+      const pageWidth = originalViewport.width;
+      const pageHeight = originalViewport.height;
+      const pdfDoc = new jsPDF({ unit: 'px', format: [pageWidth, pageHeight] });
 
-
-  const summaryLines = ['PDF Markup Summary'];
-  colors.forEach(color => {
-    const labelInput = document.querySelector(`.color-dot[data-color='${color}']`).nextSibling;
-    const label = labelInput && labelInput.value ? labelInput.value : `item ${colors.indexOf(color) + 1}`;
-    if (counts[color] > 0) {
-      summaryLines.push(`${label} (${color}): ${counts[color]}`);
-    }
-  });
-
-  for (let i = 1; i <= totalPages; i++) {
-    const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 1 });
-    const canvasTemp = document.createElement('canvas');
-    canvasTemp.width = viewport.width;
-    canvasTemp.height = viewport.height;
-    const ctxTemp = canvasTemp.getContext('2d');
-    await page.render({ canvasContext: ctxTemp, viewport }).promise;
-
-    const imgData = canvasTemp.toDataURL('image/jpeg');
-
-    if (i !== 1) {
-      pdfDoc.addPage([viewport.width, viewport.height]);
-      pdfDoc.setPage(pdfDoc.getNumberOfPages());
-    }
-    pdfDoc.addImage(imgData, 'JPEG', 0, 0, viewport.width, viewport.height);
-
-    if (i === 1) {
-      pdfDoc.setFontSize(28);
-      pdfDoc.setTextColor(0, 0, 0);
-      let textY = 30;
-      summaryLines.forEach(line => {
-        pdfDoc.text(line, 10, textY);
-        textY += 36;
+      const summaryLines = ['PDF Markup Summary'];
+      colors.forEach(color => {
+        const dotElement = document.querySelector(`.color-dot[data-color='${color}']`);
+        const labelInput = dotElement?.closest('.color-dot-wrapper')?.querySelector('input');
+        const label = labelInput && labelInput.value ? labelInput.value : `item ${colors.indexOf(color) + 1}`;
+        if (counts[color] > 0) {
+          summaryLines.push(`${label} (${color}): ${counts[color]}`);
+        }
       });
-    }
 
-    if (marks[i]) {
-      marks[i].forEach(mark => {
-        pdfDoc.setFillColor(mark.color);
-        pdfDoc.circle(mark.x, mark.y, 5, 'F');
-      });
-    }
-  }
+      for (let i = 1; i <= totalPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1 });
+        const canvasTemp = document.createElement('canvas');
+        canvasTemp.width = viewport.width;
+        canvasTemp.height = viewport.height;
+        const ctxTemp = canvasTemp.getContext('2d');
+        await page.render({ canvasContext: ctxTemp, viewport }).promise;
 
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('en-US').replace(/\//g, '-');
-const timeStr = now.toLocaleTimeString('en-US', { hour12: true }).replace(/:/g, '-').replace(/\s/g, '');
-const timestamp = `${dateStr}_${timeStr}`;
-  const filename = `marked_${timestamp}.pdf`;
-  pdfDoc.save(filename);
+        const imgData = canvasTemp.toDataURL('image/jpeg');
+
+        if (i !== 1) {
+          pdfDoc.addPage([viewport.width, viewport.height]);
+          pdfDoc.setPage(pdfDoc.getNumberOfPages());
+        }
+        pdfDoc.addImage(imgData, 'JPEG', 0, 0, viewport.width, viewport.height);
+
+        if (i === 1) {
+          pdfDoc.setFontSize(28);
+          pdfDoc.setTextColor(0, 0, 0);
+          let textY = 30;
+          summaryLines.forEach(line => {
+            pdfDoc.text(line, 10, textY);
+            textY += 36;
+          });
+        }
+
+        if (marks[i]) {
+          marks[i].forEach(mark => {
+            pdfDoc.setFillColor(mark.color);
+            pdfDoc.circle(mark.x, mark.y, 5, 'F');
+          });
+        }
+      }
+
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US').replace(/\//g, '-');
+      const timeStr = now.toLocaleTimeString('en-US', { hour12: true }).replace(/:/g, '-').replace(/\s/g, '');
+      const timestamp = `${dateStr}_${timeStr}`;
+      const filename = `marked_${timestamp}.pdf`;
+      pdfDoc.save(filename);
     }
 
     document.addEventListener('keydown', (e) => {
@@ -399,9 +432,10 @@ const timestamp = `${dateStr}_${timeStr}`;
     }
 
     function fitToScreen() {
-      const containerWidth = container.clientWidth;
+      if (!pdf) return;
       pdf.getPage(currentPage).then(page => {
-        const viewportUnscaled = page.getViewport({ scale: 2 });
+        const viewportUnscaled = page.getViewport({ scale: 1, rotation });
+        const containerWidth = container.clientWidth;
         scale = containerWidth / viewportUnscaled.width;
         renderPage(currentPage);
       });
@@ -415,6 +449,11 @@ const timestamp = `${dateStr}_${timeStr}`;
           document.exitFullscreen();
         }
       }
+    }
+
+    function rotatePDF() {
+      rotation = (rotation + 90) % 360;
+      fitToScreen();
     }
   </script>
 
