@@ -145,6 +145,8 @@
     let selectedColor = colors[0];
     let pdf = null, currentPage = 1, totalPages = 1, viewport = null, scale = 1;
     let rotation = 0; // 0, 90, 180, 270
+    let eraserMode = false;
+let eraserToolEl = null;
 
     const toolbar = document.getElementById('color-tools');
     const container = document.getElementById('canvas-container');
@@ -175,8 +177,53 @@
       }
     }
 
-    // Build color tools
-    colors.forEach(color => {
+// Build color tools
+// --- Eraser tool (toggle) ---
+(function(){
+  const wrapper = document.createElement('div');
+  wrapper.className = 'color-dot-wrapper';
+
+  const eraser = document.createElement('div');
+  eraser.style.width = '25px';
+  eraser.style.height = '25px';
+  eraser.style.border = '2px solid transparent';
+  eraser.style.borderRadius = '6px';
+  eraser.style.cursor = 'pointer';
+  eraser.style.background = '#ffffff';
+  eraser.style.display = 'flex';
+  eraser.style.alignItems = 'center';
+  eraser.style.justifyContent = 'center';
+  eraser.style.boxShadow = 'inset 0 0 0 1px rgba(0,0,0,0.2)';
+  eraser.title = 'Eraser';
+  eraser.textContent = 'E';
+  eraser.style.fontWeight = '700';
+  eraser.style.fontSize = '12px';
+
+  const label = document.createElement('div');
+  label.textContent = 'Eraser';
+  label.style.fontSize = '12px';
+  label.style.marginTop = '5px';
+
+  eraser.onclick = () => {
+    eraserMode = !eraserMode;
+    if (eraserMode) {
+      // deselect color dots
+      document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('selected'));
+      eraser.style.borderColor = 'black';
+    } else {
+      eraser.style.borderColor = 'transparent';
+    }
+  };
+
+  wrapper.appendChild(eraser);
+  wrapper.appendChild(label);
+  toolbar.appendChild(wrapper);
+  eraserToolEl = eraser;
+})();
+
+// Existing color tools
+colors.forEach(color => {
+
       const wrapper = document.createElement('div');
       wrapper.className = 'color-dot-wrapper';
 
@@ -185,11 +232,14 @@
       dot.style.backgroundColor = color;
       dot.dataset.color = color;
       if (color === selectedColor) dot.classList.add('selected');
-      dot.onclick = () => {
-        document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('selected'));
-        dot.classList.add('selected');
-        selectedColor = color;
-      };
+ dot.onclick = () => {
+  // turn off eraser if it was on
+  eraserMode = false;
+  if (eraserToolEl) eraserToolEl.style.borderColor = 'transparent';
+  document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('selected'));
+  dot.classList.add('selected');
+  selectedColor = color;
+};
 
       const label = document.createElement('input');
       label.type = 'text';
@@ -323,25 +373,55 @@
         container.appendChild(dot);
       });
     }
+function eraseNearestMark(xr, yr, baseW, baseH) {
+  if (!marks[currentPage] || marks[currentPage].length === 0) return;
+  let minIdx = -1;
+  let minDist = Infinity;
+  let minColor = null;
 
-    container.addEventListener('click', e => {
-      if (!pdf) return;
-      pdf.getPage(currentPage).then(page => {
-        const base = page.getViewport({ scale: 1, rotation: 0 });
-        const rect = canvas.getBoundingClientRect();
-        // coords in rotated, scaled space
-        const xr = (e.clientX - rect.left) / scale;
-        const yr = (e.clientY - rect.top) / scale;
-        // map back to unrotated page coords for storage
-        const p = inverseTransformPoint(xr, yr, rotation, base.width, base.height);
+  // Compare in rotated (display) coordinates
+  marks[currentPage].forEach((m, i) => {
+    const p = transformPoint(m.x, m.y, rotation, baseW, baseH);
+    const dx = p.x - xr;
+    const dy = p.y - yr;
+    const d = Math.hypot(dx, dy);
+    if (d < minDist) { minDist = d; minIdx = i; minColor = m.color; }
+  });
 
-        if (!marks[currentPage]) marks[currentPage] = [];
-        marks[currentPage].push({ x: p.x, y: p.y, color: selectedColor });
-        counts[selectedColor]++;
-        updateCounts();
-        renderPage(currentPage);
-      });
-    });
+  const threshold = 8; // in PDF units at scale 1 (~8 px)
+  if (minIdx !== -1 && minDist <= threshold) {
+    marks[currentPage].splice(minIdx, 1);
+    if (minColor && counts[minColor] > 0) {
+      counts[minColor]--;
+      updateCounts();
+    }
+    renderPage(currentPage);
+  }
+}
+container.addEventListener('click', e => {
+  if (!pdf) return;
+  pdf.getPage(currentPage).then(page => {
+    const base = page.getViewport({ scale: 1, rotation: 0 });
+    const rect = canvas.getBoundingClientRect();
+    // coords in rotated, scaled space (unscaled PDF page units)
+    const xr = (e.clientX - rect.left) / scale;
+    const yr = (e.clientY - rect.top) / scale;
+
+    if (eraserMode) {
+      eraseNearestMark(xr, yr, base.width, base.height);
+      return;
+    }
+
+    // map back to unrotated page coords for storage
+    const p = inverseTransformPoint(xr, yr, rotation, base.width, base.height);
+    if (!marks[currentPage]) marks[currentPage] = [];
+    marks[currentPage].push({ x: p.x, y: p.y, color: selectedColor });
+    counts[selectedColor]++;
+    updateCounts();
+    renderPage(currentPage);
+  });
+});
+
 
     function resetMarks() {
       Object.keys(marks).forEach(page => marks[page] = []);
